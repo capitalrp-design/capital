@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: Segoe UI, Arial, sans-serif; }
+  iframe, video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+  #twitch { position: absolute; inset: 0; }
+  #msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #8a93a6; font-size: 42px; }
+</style>
+</head>
+<body>
+<div id="msg">Sin señal</div>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const src = q.get('src') || '';
+  const start = Math.max(0, parseInt(q.get('start') || '0', 10) || 0);
+  const parent = q.get('parent') || location.hostname;
+  let vol = Math.max(0, Math.min(100, parseInt(q.get('vol') || '50', 10) || 0));
+  let applyVolume = function () {};
+  const msg = document.getElementById('msg');
+
+  function loadScript(url) {
+    return new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = url; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  function iframe(url) {
+    const f = document.createElement('iframe');
+    f.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+    f.referrerPolicy = 'strict-origin-when-cross-origin';
+    f.src = url;
+    document.body.appendChild(f);
+    msg.remove();
+    return f;
+  }
+
+  function youtube(u, host) {
+    let id = u.searchParams.get('v');
+    const parts = u.pathname.split('/').filter(Boolean);
+    if (host === 'youtu.be') id = parts[0];
+    if (!id && ['embed', 'live', 'shorts', 'v'].includes(parts[0])) id = parts[1];
+    const list = u.searchParams.get('list');
+    let url = 'https://www.youtube-nocookie.com/embed/' + (id || '') +
+      '?autoplay=1&controls=0&disablekb=1&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&enablejsapi=1&mute=0';
+    if (!id && list) url = 'https://www.youtube-nocookie.com/embed/videoseries?listType=playlist&list=' + encodeURIComponent(list) +
+      '&autoplay=1&controls=0&disablekb=1&enablejsapi=1';
+    if (id && list) url += '&list=' + encodeURIComponent(list);
+    if (start > 0) url += '&start=' + start;
+    if (location.protocol.startsWith('http')) url += '&origin=' + encodeURIComponent(location.origin);
+    const f = iframe(url);
+    applyVolume = () => f.contentWindow && f.contentWindow.postMessage(
+      JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), '*');
+    f.addEventListener('load', () => {
+      f.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 1 }), '*');
+      setTimeout(applyVolume, 600); setTimeout(applyVolume, 2000);
+    });
+  }
+
+  async function twitch(u, host) {
+    const parts = u.pathname.split('/').filter(Boolean);
+    if (host === 'clips.twitch.tv' || parts[1] === 'clip') {
+      const slug = host === 'clips.twitch.tv' ? parts[0] : parts[2];
+      iframe('https://clips.twitch.tv/embed?clip=' + encodeURIComponent(slug) + '&parent=' + encodeURIComponent(parent) + '&autoplay=true');
+      return;
+    }
+    const opts = { width: '100%', height: '100%', parent: [parent], autoplay: true, muted: false, controls: false };
+    if (parts[0] === 'videos') opts.video = parts[1]; else opts.channel = parts[0];
+    await loadScript('https://player.twitch.tv/js/embed/v1.js');
+    const holder = document.createElement('div');
+    holder.id = 'twitch';
+    document.body.appendChild(holder);
+    msg.remove();
+    const p = new Twitch.Player('twitch', opts);
+    p.addEventListener(Twitch.Player.READY, () => { p.setMuted(false); p.setVolume(vol / 100); });
+    applyVolume = () => { try { p.setVolume(vol / 100); } catch (e) {} };
+  }
+
+  function vimeo(u) {
+    const id = u.pathname.split('/').filter(Boolean).pop();
+    const f = iframe('https://player.vimeo.com/video/' + id + '?autoplay=1&muted=0&controls=0');
+    applyVolume = () => f.contentWindow && f.contentWindow.postMessage(JSON.stringify({ method: 'setVolume', value: vol / 100 }), '*');
+    f.addEventListener('load', () => setTimeout(applyVolume, 800));
+  }
+
+  function dailymotion(u, host) {
+    const id = host === 'dai.ly' ? u.pathname.split('/').filter(Boolean)[0] : u.pathname.split('/').filter(Boolean).pop();
+    iframe('https://www.dailymotion.com/embed/video/' + id + '?autoplay=1&mute=0&controls=0');
+  }
+
+  function kick(u) {
+    const ch = u.pathname.split('/').filter(Boolean)[0];
+    iframe('https://player.kick.com/' + encodeURIComponent(ch) + '?autoplay=true&muted=false');
+  }
+
+  async function file(u) {
+    const v = document.createElement('video');
+    v.autoplay = true; v.playsInline = true; v.loop = false;
+    v.style.objectFit = 'contain';
+    document.body.appendChild(v);
+    msg.remove();
+    if (/\.m3u8(\?|$)/i.test(u.href) && !v.canPlayType('application/vnd.apple.mpegurl')) {
+      await loadScript('https://cdn.jsdelivr.net/npm/hls.js@1');
+      const hls = new Hls();
+      hls.loadSource(u.href); hls.attachMedia(v);
+    } else {
+      v.src = u.href;
+    }
+    v.addEventListener('loadedmetadata', () => {
+      if (start > 0 && isFinite(v.duration) && start < v.duration) v.currentTime = start;
+      v.play().catch(() => {});
+    });
+    applyVolume = () => { v.volume = vol / 100; };
+  }
+
+  function run() {
+    let u;
+    try { u = new URL(src); } catch (e) { return; }
+    const host = u.hostname.replace(/^(www|m|music)\./, '').toLowerCase();
+    if (/\.(mp4|webm|ogg|ogv|m3u8|mp3|m4v|mov)(\?|$)/i.test(u.pathname + u.search)) return file(u);
+    if (['youtube.com', 'youtu.be', 'youtube-nocookie.com'].includes(host)) return youtube(u, host);
+    if (host === 'twitch.tv' || host === 'clips.twitch.tv') return twitch(u, host);
+    if (host === 'vimeo.com') return vimeo(u);
+    if (host === 'dailymotion.com' || host === 'dai.ly') return dailymotion(u, host);
+    if (host === 'kick.com') return kick(u);
+    iframe(u.href); // cualquier otra web que permita ser embebida
+  }
+
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (d && d.action === 'volume') { vol = Math.max(0, Math.min(100, d.value | 0)); applyVolume(); }
+  });
+
+  run();
+  applyVolume();
+})();
+</script>
+</body>
+</html>
