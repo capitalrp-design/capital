@@ -62,10 +62,19 @@
   }
 
   async function twitch(u, host) {
+    const mode = q.get('tw') || 'iframe';
+    if (mode === 'off') { msg.textContent = 'Twitch desactivado'; return; }
     const parts = u.pathname.split('/').filter(Boolean);
+    const par = encodeURIComponent(parent);
     if (host === 'clips.twitch.tv' || parts[1] === 'clip') {
       const slug = host === 'clips.twitch.tv' ? parts[0] : parts[2];
-      iframe('https://clips.twitch.tv/embed?clip=' + encodeURIComponent(slug) + '&parent=' + encodeURIComponent(parent) + '&autoplay=true');
+      iframe('https://clips.twitch.tv/embed?clip=' + encodeURIComponent(slug) + '&parent=' + par + '&autoplay=true');
+      return;
+    }
+    if (mode === 'iframe') {
+      let url = 'https://player.twitch.tv/?parent=' + par + '&autoplay=true&muted=' + (vol === 0);
+      url += parts[0] === 'videos' ? '&video=' + encodeURIComponent(parts[1]) : '&channel=' + encodeURIComponent(parts[0]);
+      iframe(url);
       return;
     }
     const opts = { width: '100%', height: '100%', parent: [parent], autoplay: true, muted: false, controls: false };
